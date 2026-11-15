@@ -1,0 +1,33 @@
+
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+local.settings.json
+
+# Next.js
+.next/
+frontend/.next/
+out/
+
+# Build files
+dist/
+build/
+coverage/
+
+# Logs
+*.log
+copilot_log.md
+
+# Azure local storage
+__blobstorage__/
+__queuestorage__/
+__azurite_db*
+
+# Operating system
+.DS_Store
+Thumbs.db

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" fill="none">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="50%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#0F172A" />
+    </linearGradient>
+
+    <!-- Glowing Core Gradient -->
+    <linearGradient id="coreGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="50%" stop-color="#60A5FA" />
+      <stop offset="100%" stop-color="#F8FAFC" />
+    </linearGradient>
+
+    <!-- Accent Emerald/Cyan -->
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <!-- Shadow filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Rounded Squircle Base -->
+  <rect x="6" y="6" width="108" height="108" rx="28" fill="url(#bgGrad)" stroke="rgba(56, 189, 248, 0.4)" stroke-width="2.5" />
+  <rect x="8" y="8" width="104" height="104" rx="26" fill="#070D19" fill-opacity="0.75" />
+
+  <!-- Career Trajectory Growth Bars / Ladder -->
+  <rect x="26" y="68" width="12" height="24" rx="4" fill="#1E3E62" />
+  <rect x="44" y="52" width="12" height="40" rx="4" fill="#0284C7" />
+  <rect x="62" y="38" width="12" height="54" rx="4" fill="url(#coreGrad)" />
+  <rect x="80" y="24" width="12" height="68" rx="4" fill="#38BDF8" filter="url(#glow)" />
+
+  <!-- Dynamic Upward Chevron Arrow (Career Breakthrough) -->
+  <path d="M30 60 L60 30 L90 60" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" opacity="0.9" />
+
+  <!-- AI Intelligence Starburst Spark at the Peak of Career Success -->
+  <g transform="translate(86, 24)">
+    <circle cx="0" cy="0" r="10" fill="#38BDF8" filter="url(#glow)" opacity="0.6" />
+    <path d="M0 -14 L3 -4 L13 0 L3 4 L0 14 L-3 4 L-13 0 L-3 -4 Z" fill="#FFFFFF" />
+  </g>
+
+  <!-- Neural Connection Dots / Synapses -->
+  <circle cx="32" cy="72" r="3" fill="#38BDF8" />
+  <circle cx="50" cy="56" r="3.5" fill="#60A5FA" />
+  <circle cx="68" cy="42" r="4" fill="#FFFFFF" />
+  <line x1="32" y1="72" x2="50" y2="56" stroke="rgba(56, 189, 248, 0.5)" stroke-width="2" stroke-dasharray="2 2" />
+  <line x1="50" y1="56" x2="68" y2="42" stroke="rgba(56, 189, 248, 0.7)" stroke-width="2" stroke-dasharray="2 2" />
+</svg>
+
