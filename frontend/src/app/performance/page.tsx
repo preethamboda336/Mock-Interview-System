@@ -128,7 +128,15 @@ export default function PerformancePage() {
               </Badge>
             </div>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Interview sessions and scorecards are currently stored locally in your browser (<code className="font-mono text-sky-300">localStorage</code>). When you connect an Azure Cosmos DB or SQL instance, sessions can synchronize seamlessly across all your devices.
+              {storageLabel === "Azure Cosmos DB" ? (
+                <>
+                  Interview sessions and evaluation scorecards are stored persistently in your <strong className="text-emerald-400">Azure Cosmos DB</strong> instance (<code className="font-mono text-sky-300">InterviewDB / sessions</code>) and accessible across all devices.
+                </>
+              ) : (
+                <>
+                  Interview sessions and scorecards are currently cached locally (<code className="font-mono text-sky-300">localStorage</code>). When you add your <strong className="text-sky-300">Azure Cosmos DB</strong> connection string in <code className="font-mono text-sky-300">local.settings.json</code>, sessions synchronize automatically.
+                </>
+              )}
             </p>
           </div>
         </div>

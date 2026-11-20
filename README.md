@@ -8,7 +8,8 @@
 ![React](https://img.shields.io/badge/React-19.3.0-61DAFB?logo=react)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-4.3.3-38BDF8?logo=tailwindcss)
-![Azure Functions](https://img.shields.io/badge/Azure_Functions-v2-0062AD?logo=microsoft-azure)
+![Azure Functions](https://img.shields.io/badge/Azure_Functions-v4-0062AD?logo=microsoft-azure)
+![Azure Cosmos DB](https://img.shields.io/badge/Azure_Cosmos_DB-NoSQL-blue?logo=azure-cosmos-db)
 ![GPT-4.1-mini](https://img.shields.io/badge/Model-GPT--4.1--mini-10A37F?logo=openai)
 
 ---
@@ -29,10 +30,11 @@
 12. [Azure AI Integration](#12-azure-ai-integration)
 13. [Security Considerations](#13-security-considerations)
 14. [Troubleshooting](#14-troubleshooting)
-15. [Future Enhancements](#15-future-enhancements)
-16. [Contributing](#16-contributing)
-17. [License and Attribution](#17-license-and-attribution)
-18. [Author](#18-author)
+15. [Viva & Project Defense Guide](#15-viva--project-defense-guide)
+16. [Future Enhancements](#16-future-enhancements)
+17. [Contributing](#17-contributing)
+18. [License and Attribution](#18-license-and-attribution)
+19. [Author](#19-author)
 
 ---
 
@@ -47,7 +49,7 @@ The **AI Interview Preparation Platform** (branded **InterviewIQ**) is a full-st
 - Returns **three tailored technical interview questions** ranked by difficulty (Foundational → Intermediate → Advanced).
 - Hosts a **mock interview session** where candidates answer each question via typed text or browser voice dictation.
 - Submits each answer back to Azure OpenAI for comprehensive evaluation, returning a scored feedback report with strengths, weaknesses, improvement suggestions, and a model benchmark answer.
-- Tracks **all sessions locally** in browser `localStorage` and aggregates performance metrics on a dedicated Performance dashboard.
+- Tracks all sessions persistently in **Azure Cosmos DB** (NoSQL document database) with dual-tier synchronization and browser `localStorage` offline fallback, aggregating performance metrics on a dedicated Performance dashboard.
 
 ### The problem it solves
 
@@ -71,8 +73,10 @@ Technical interview preparation is typically expensive (coaching sessions), gene
 | Mock Interview | ✅ Implemented | Per-question answer editor with word/char count and voice dictation |
 | AI Answer Evaluation | ✅ Implemented | Full scorecard: score, relevance, tone, accuracy, strengths/weaknesses |
 | Detailed AI Feedback | ✅ Implemented | Model benchmark answer, suggestions, and raw feedback stream |
+| Azure Cosmos DB Storage | ✅ Implemented | Cloud-native JSON document store (`interviewDB/sessions`) with live sync |
+| Dual-Tier Persistence | ✅ Implemented | Instant local caching + asynchronous cloud database background sync |
 | Performance Dashboard | ✅ Implemented | Score progression, skill metrics, full session history table |
-| Interview History | ✅ Implemented | Persistent session storage in browser `localStorage`; JSON export |
+| Interview History & Export | ✅ Implemented | Cloud-synchronized history with JSON data export and deletion |
 | User Profile | ✅ Implemented | Compact profile modal (name, role, AI model, application) |
 | Dark Theme | ✅ Implemented | Permanent dark navy theme throughout the application |
 | Collapsible Sidebar | ✅ Implemented | Icon-only collapsed mode with tooltips, responsive mobile drawer |
@@ -143,19 +147,23 @@ Replace with: `![Performance Dashboard](docs/screenshots/performance.png)`
 | Geist Font | via `next/font` | Sans-serif and mono typefaces |
 | Web Speech API | Browser built-in | Voice dictation during mock interview |
 
-### Backend (Azure Functions)
+### Backend & Database (Azure Serverless)
 
 | Technology | Purpose |
 |---|---|
-| Azure Functions (v2) | Serverless HTTP trigger backend |
+| Azure Functions (v4 Node.js) | Serverless HTTP trigger REST API backend |
+| Azure Cosmos DB (NoSQL API) | Cloud-native JSON document store for session history & scores |
 | Microsoft Azure OpenAI Service | LLM inference endpoint |
 | GPT-4.1-mini (via Microsoft Foundry) | Question generation and answer evaluation model |
+| `@azure/cosmos` (v4.x) | Official Azure Cosmos DB Node.js SDK |
+| `axios` & `dotenv` | HTTP client for Azure OpenAI calls & local env loading |
 
-### Developer Tools
+### Developer Tools & Orchestration
 
 | Tool | Purpose |
 |---|---|
-| Azure Functions Core Tools (`func`) | Local Azure Functions runtime |
+| Azure Functions Core Tools (`func` v4) | Local Azure Functions runtime |
+| `concurrently` | Single-command root runner for backend and frontend |
 | ESLint + eslint-config-next | Linting |
 | `@types/node`, `@types/react`, `@types/react-dom` | TypeScript type definitions |
 
@@ -172,7 +180,7 @@ flowchart LR
     subgraph Browser["Browser (Next.js SPA)"]
         UI["Dashboard / Resume / Interview / Feedback / Performance Pages"]
         CTX["React Context\n(InterviewContext, SidebarContext)"]
-        LS["localStorage\n(Session & Score Persistence)"]
+        LS["localStorage\n(Offline Cache & Resilient Fallback)"]
         UI --> CTX
         CTX --> LS
     end
@@ -184,97 +192,93 @@ flowchart LR
     subgraph AF["Azure Functions Backend (Port 7071)"]
         GQ["POST /api/generateQuestions"]
         EA["POST /api/evaluateAnswer"]
+        SS["POST /api/saveSession"]
+        GS["GET /api/getSessions"]
+        DS["DELETE /api/deleteSession"]
+        DBS["GET /api/dbStatus"]
     end
 
     subgraph AOI["Azure OpenAI Service\n(Microsoft Foundry)"]
         GPT["GPT-4.1-mini\nDeployment"]
     end
 
+    subgraph CDB["Azure Cosmos DB (NoSQL)"]
+        DB[("Database: InterviewDB\nContainer: sessions\nPartitionKey: /id")]
+    end
+
     UI -->|"Direct fetch or proxy fallback"| PROXY
-    PROXY -->|rewrites| GQ
-    PROXY -->|rewrites| EA
-    UI -->|Direct fetch (primary)| GQ
-    UI -->|Direct fetch (primary)| EA
+    PROXY -->|rewrites| AF
+    UI -->|Direct REST calls| AF
     GQ --> GPT
     EA --> GPT
-    GPT -->|JSON response| GQ
-    GPT -->|JSON response| EA
-    GQ -->|"{ questions: string[] }"| UI
-    EA -->|"{ feedback: EvaluationFeedback }"| UI
+    GPT --> GQ
+    GPT --> EA
+    SS --> DB
+    GS --> DB
+    DS --> DB
+    DBS --> DB
 ```
 
-### Request Flow
+### Request Flow & Data Persistence
 
-1. The user submits resume text and a job title on the **Resume Analysis** page.
-2. The frontend calls `POST http://localhost:7071/api/generateQuestions` directly.
-3. If a browser network or CORS error occurs, the client retries via the **Next.js rewrite proxy** at `/api/proxy/generateQuestions`, which is rewritten to the same Azure Functions URL server-side.
-4. Azure Functions forwards the resume text to **Azure OpenAI (GPT-4.1-mini)** using the credentials stored only on the backend.
-5. GPT-4.1-mini returns structured question text; the function parses and returns `{ questions: string[] }`.
-6. The frontend stores the session in React context and `localStorage`.
-7. During the mock interview, each submitted answer triggers `POST /api/evaluateAnswer`.
-8. The evaluation response (`EvaluationFeedback`) is stored per-question in the session and rendered on the Feedback page.
+1. **Question Generation:** User submits resume text and target job role $\rightarrow$ `POST /api/generateQuestions` forwards to Azure OpenAI (GPT-4.1-mini) $\rightarrow$ Returns 3 tailored technical questions categorized by seniority and difficulty.
+2. **Session Persistence:** Next.js starts a mock session $\rightarrow$ asynchronously calls `POST /api/saveSession` $\rightarrow$ Azure Functions upserts the session JSON document into **Azure Cosmos DB** (container: `sessions`, partition key `/id`). `localStorage` is maintained simultaneously as an offline fallback.
+3. **Mock Evaluation:** Each candidate answer triggers `POST /api/evaluateAnswer` $\rightarrow$ GPT-4.1-mini evaluates relevance, accuracy, and tone, returning a score, feedback report, and model benchmark answer.
+4. **Historical Synchronization:** The Dashboard and Performance pages call `GET /api/getSessions` to fetch stored interview sessions from Azure Cosmos DB, calculating aggregated skill metrics, score progression, and interview history across sessions.
+5. **Session Management:** Users can delete past sessions via `DELETE /api/deleteSession?id=...`, which permanently purges the document from Cosmos DB.
 
 ---
 
 ## 6. Project Folder Structure
 
 ```
-Azure PBL/                        ← Project root
+Mock-Interview-System/               ← Project root (Azure Serverless & Next.js Monorepo)
 │
-├── frontend/                     ← Next.js frontend application
-│   ├── public/
-│   │   ├── images/               ← Static images (hero background, etc.)
-│   │   └── logo.svg              ← Application logo
-│   │
+├── evaluateAnswer/                  ← Azure Function: evaluates interview answers via GPT-4.1-mini
+│   ├── function.json                ← HTTP trigger definition [POST]
+│   └── index.js                     ← Evaluation logic, scorecard extraction, prompt template
+│
+├── generateQuestions/               ← Azure Function: generates 3 tailored technical questions
+│   ├── function.json                ← HTTP trigger definition [POST]
+│   └── index.js                     ← Resume parsing & OpenAI prompt execution
+│
+├── saveSession/                     ← Azure Function: persists session JSON to Azure Cosmos DB
+│   ├── function.json                ← HTTP trigger definition [POST]
+│   └── index.js                     ← Cosmos DB upsert handler
+│
+├── getSessions/                     ← Azure Function: retrieves all sessions from Cosmos DB
+│   ├── function.json                ← HTTP trigger definition [GET]
+│   └── index.js                     ← Cosmos DB query handler
+│
+├── deleteSession/                   ← Azure Function: deletes an interview session
+│   ├── function.json                ← HTTP trigger definition [DELETE, POST]
+│   └── index.js                     ← Cosmos DB item deletion handler
+│
+├── dbStatus/                        ← Azure Function: checks Cosmos DB connectivity health
+│   ├── function.json                ← HTTP trigger definition [GET]
+│   └── index.js                     ← Health status provider
+│
+├── shared/                          ← Shared backend utilities
+│   └── cosmosClient.js              ← Azure Cosmos DB SDK singleton & query helpers
+│
+├── host.json                        ← Azure Functions host settings & extension bundles
+├── local.settings.json              ← Backend secrets (Cosmos DB, OpenAI API keys)
+├── package.json                     ← Backend dependencies & concurrent dev orchestration
+│
+├── frontend/                        ← Next.js frontend application
+│   ├── public/                      ← Static assets, SVGs, favicon
 │   ├── src/
-│   │   ├── app/                  ← Next.js App Router pages
-│   │   │   ├── layout.tsx        ← Root layout (providers, metadata, fonts)
-│   │   │   ├── globals.css       ← Global Tailwind and base styles
-│   │   │   ├── page.tsx          ← Dashboard page (/)
-│   │   │   ├── resume/
-│   │   │   │   └── page.tsx      ← Resume Analysis page (/resume)
-│   │   │   ├── interview/
-│   │   │   │   └── page.tsx      ← Mock Interview page (/interview)
-│   │   │   ├── feedback/
-│   │   │   │   └── page.tsx      ← AI Feedback page (/feedback)
-│   │   │   └── performance/
-│   │   │       └── page.tsx      ← Performance Dashboard (/performance)
-│   │   │
-│   │   ├── components/
-│   │   │   ├── layout/
-│   │   │   │   ├── AppLayout.tsx ← Root shell: Sidebar + Header + main content
-│   │   │   │   ├── Sidebar.tsx   ← Collapsible vertical navigation sidebar
-│   │   │   │   └── Header.tsx    ← Sticky top bar: notifications, user profile
-│   │   │   └── ui/
-│   │   │       ├── Badge.tsx     ← Status badge component
-│   │   │       ├── Button.tsx    ← Button with loading and icon slots
-│   │   │       ├── Card.tsx      ← Card, CardHeader, CardContent, etc.
-│   │   │       ├── Logo.tsx      ← Application logo component
-│   │   │       └── Progress.tsx  ← Progress bar component
-│   │   │
-│   │   ├── context/
-│   │   │   ├── InterviewContext.tsx ← Session lifecycle, answers, evaluations
-│   │   │   ├── SidebarContext.tsx   ← Sidebar collapse/mobile state
-│   │   │   └── ThemeContext.tsx     ← Dark theme enforcement
-│   │   │
-│   │   ├── lib/
-│   │   │   ├── api.ts            ← generateQuestions() and evaluateAnswer() with proxy fallback
-│   │   │   ├── storage.ts        ← localStorage read/write helpers and stats computation
-│   │   │   └── utils.ts          ← Text cleaning, score extraction, date formatting
-│   │   │
-│   │   └── types/
-│   │       └── interview.ts      ← TypeScript interfaces: EvaluationFeedback, InterviewSession, etc.
-│   │
-│   ├── .env.local                ← Local environment variables (not committed)
-│   ├── .env.example              ← Environment variable template (committed)
-│   ├── next.config.ts            ← Next.js config with Turbopack and proxy rewrite
-│   ├── package.json              ← Frontend dependencies and npm scripts
-│   └── tsconfig.json             ← TypeScript configuration
+│   │   ├── app/                     ← Next.js App Router (Dashboard, Resume, Interview, Feedback, Performance)
+│   │   ├── components/              ← Reusable UI & Layout components (AppLayout, Sidebar, Header, Badges)
+│   │   ├── context/                 ← React Contexts (InterviewContext, SidebarContext)
+│   │   ├── lib/                     ← API client (api.ts), Storage cache (storage.ts), Utils (utils.ts)
+│   │   └── types/                   ← TypeScript interfaces (InterviewSession, EvaluationFeedback)
+│   ├── .env.local                   ← Frontend environment config (NEXT_PUBLIC_API_BASE_URL)
+│   ├── next.config.ts               ← Next.js config with rewrite proxy
+│   └── package.json                 ← Frontend dependencies & scripts
 │
-└── README.md                     ← This file
+└── README.md                        ← Full technical documentation
 ```
-
-> **Note:** The Azure Functions backend files (containing function implementations, `host.json`, `local.settings.json`, and AI credentials) reside separately. The frontend communicates with the backend over HTTP and does **not** include any backend source in this directory.
 
 ---
 
@@ -286,132 +290,112 @@ Install the following tools before proceeding:
 
 | Tool | Download | Notes |
 |---|---|---|
-| Node.js | https://nodejs.org/ | v18 or later recommended |
-| npm | Included with Node.js | v9 or later |
-| Azure Functions Core Tools | https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local | v4 for running functions locally |
-| Visual Studio Code | https://code.visualstudio.com/ | Recommended editor |
-| Azure OpenAI access | https://portal.azure.com/ | Requires an Azure subscription with OpenAI resource |
+| Node.js | https://nodejs.org/ | v18, v20, or v22 LTS (v24 supported) |
+| npm | Included with Node.js | v9+ |
+| Azure Functions Core Tools | https://learn.microsoft.com/en-us/azure/azure-functions/functions-run-local | v4 for running serverless functions locally |
+| Azure OpenAI Resource | https://portal.azure.com/ | Deployed model endpoint (GPT-4.1-mini) |
+| Azure Cosmos DB Account | https://portal.azure.com/ | Azure Cosmos DB for NoSQL (or emulator) |
 
-### Clone the Repository
+### 1. Clone the Repository
 
 ```bash
-git clone YOUR_REPOSITORY_URL
-cd "Azure PBL"
+git clone https://github.com/YOUR_USERNAME/Mock-Interview-System.git
+cd Mock-Interview-System
 ```
 
-Replace `YOUR_REPOSITORY_URL` with your actual repository URL.
+### 2. Install Dependencies
 
-### Install Frontend Dependencies
+You can install all dependencies across both backend and frontend:
 
 ```bash
+# 1. Install root backend dependencies (Cosmos DB SDK, Axios, Concurrently)
+npm install
+
+# 2. Install frontend dependencies (Next.js, React, Tailwind, Lucide)
 cd frontend
 npm install
+cd ..
 ```
 
 ---
 
 ## 8. Environment Configuration
 
-### Frontend — `.env.local`
+### Frontend — `frontend/.env.local`
 
-The frontend requires one environment variable to locate the Azure Functions backend.
-
-1. Copy the example file:
-
-```bash
-# From the frontend/ directory
-copy .env.example .env.local
-```
-
-2. Edit `.env.local`:
+The frontend requires one environment variable pointing to the Azure Functions API:
 
 ```env
-# Point this to your running Azure Functions instance.
-# Local development (default):
+# Point this to your Azure Functions instance
+# Local development default:
 NEXT_PUBLIC_API_BASE_URL=http://localhost:7071
-
-# Azure-deployed backend:
-# NEXT_PUBLIC_API_BASE_URL=https://your-function-app.azurewebsites.net
 ```
-
-> [!IMPORTANT]
-> `NEXT_PUBLIC_API_BASE_URL` must use the `NEXT_PUBLIC_` prefix so that Next.js exposes it to the browser bundle. Without it, all API calls will fall back to `http://localhost:7071`.
 
 ### Backend — `local.settings.json`
 
-The Azure Functions backend (not included in the frontend repository) requires a `local.settings.json` file at its root. Create it with the following structure:
+The Azure Functions backend requires a `local.settings.json` file in the root folder:
 
 ```json
 {
   "IsEncrypted": false,
   "Values": {
-    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
-    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsStorage": "",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
     "AZURE_OPENAI_API_KEY": "your_azure_openai_api_key",
     "AZURE_OPENAI_ENDPOINT": "https://your-resource.openai.azure.com/",
-    "AZURE_OPENAI_DEPLOYMENT_ID": "your_deployment_name"
-  },
-  "Host": {
-    "LocalHttpPort": 7071,
-    "CORS": "*"
+    "AZURE_OPENAI_DEPLOYMENT_ID": "gpt-4.1-mini",
+    "AZURE_OPENAI_API_VERSION": "2024-10-21",
+    "COSMOS_DB_CONNECTION_STRING": "AccountEndpoint=https://...;AccountKey=...;",
+    "COSMOS_DB_DATABASE_NAME": "InterviewDB",
+    "COSMOS_DB_CONTAINER_NAME": "sessions"
   }
 }
 ```
 
-> [!CAUTION]
-> Never commit `local.settings.json` to version control. It contains your Azure API credentials. Add it to `.gitignore` immediately.
-
-**Required backend environment variables:**
-
-| Variable | Description |
-|---|---|
-| `AZURE_OPENAI_API_KEY` | API key from your Azure OpenAI resource |
-| `AZURE_OPENAI_ENDPOINT` | Endpoint URL, e.g. `https://your-resource.openai.azure.com/` |
-| `AZURE_OPENAI_DEPLOYMENT_ID` | The deployed model name, e.g. `gpt-4.1-mini` |
+> [!TIP]
+> **Graceful Fallback:** If `COSMOS_DB_CONNECTION_STRING` is left blank during initial testing, the application automatically falls back to browser `localStorage` caching so you can test the AI mock interviews immediately before creating your Azure database!
 
 ---
 
 ## 9. Running the Application
 
-You need **two terminals** running simultaneously: one for the backend, one for the frontend.
+### Option A: Single Command (Recommended)
 
-### Terminal 1 — Start the Azure Functions Backend
+Run both the **Azure Functions Backend** and the **Next.js Frontend** simultaneously from the project root:
 
-Navigate to the directory containing your Azure Functions source code and run:
+```bash
+npm run dev
+```
+*(or `npm start`)*
 
+This starts:
+- **Azure Functions Backend** (`func start`) on `http://localhost:7071`
+- **Next.js Frontend** (`next dev`) on `http://localhost:3000`
+- Color-coded logs from both services piped into one terminal.
+
+### Option B: Separate Terminals
+
+#### Terminal 1 — Start Azure Functions Backend
 ```bash
 func start
 ```
 
-The backend will start on `http://localhost:7071`. You should see output confirming the two HTTP triggers are registered:
-
-```
-Functions:
-  generateQuestions: [POST] http://localhost:7071/api/generateQuestions
-  evaluateAnswer:    [POST] http://localhost:7071/api/evaluateAnswer
-```
-
-### Terminal 2 — Start the Next.js Frontend
-
+#### Terminal 2 — Start Next.js Frontend
 ```bash
 cd frontend
 npm run dev
 ```
 
-The frontend will start on `http://localhost:3000`.
-
-Open your browser and navigate to: **http://localhost:3000**
+Open your browser at: **[http://localhost:3000](http://localhost:3000)**
 
 ### Production Build
 
-To verify the application builds without errors before deploying:
+To verify and produce an optimized production build:
 
 ```bash
 cd frontend
 npm run build
 ```
-
-A successful build outputs static files to `frontend/.next/`.
 
 ---
 
@@ -515,6 +499,121 @@ Content-Type: application/json
 
 ---
 
+### `POST /api/saveSession`
+
+Upserts (creates or updates) an interview session JSON document in Azure Cosmos DB (`InterviewDB/sessions`).
+
+**Request**
+
+```http
+POST http://localhost:7071/api/saveSession
+Content-Type: application/json
+```
+
+```json
+{
+  "session": {
+    "id": "session_1740000000000",
+    "title": "Senior Azure Developer Mock",
+    "jobTitle": "Senior Azure Developer",
+    "status": "completed",
+    "averageScore": 8.5,
+    "questions": [...],
+    "answers": { "q_1": "Candidate's response..." },
+    "evaluations": { "q_1": { "score": "8.5/10", "technicalAccuracy": "..." } }
+  }
+}
+```
+
+**Success Response** — `200 OK`
+
+```json
+{
+  "success": true,
+  "source": "Azure Cosmos DB",
+  "session": { "id": "session_1740000000000", ... }
+}
+```
+
+---
+
+### `GET /api/getSessions`
+
+Retrieves all recorded mock interview sessions from Azure Cosmos DB sorted by creation timestamp descending.
+
+**Request**
+
+```http
+GET http://localhost:7071/api/getSessions
+```
+
+**Success Response** — `200 OK`
+
+```json
+{
+  "configured": true,
+  "source": "Azure Cosmos DB",
+  "sessions": [
+    {
+      "id": "session_1740000000000",
+      "title": "Senior Azure Developer Mock",
+      "status": "completed",
+      "averageScore": 8.5,
+      "createdAt": "2026-11-20T22:00:00.000Z"
+    }
+  ]
+}
+```
+
+---
+
+### `DELETE /api/deleteSession`
+
+Deletes an interview session by ID from Azure Cosmos DB.
+
+**Request**
+
+```http
+DELETE http://localhost:7071/api/deleteSession?id=session_1740000000000
+Content-Type: application/json
+```
+
+**Success Response** — `200 OK`
+
+```json
+{
+  "success": true,
+  "deleted": true,
+  "source": "Azure Cosmos DB"
+}
+```
+
+---
+
+### `GET /api/dbStatus`
+
+Checks connectivity and returns configuration status for the database.
+
+**Request**
+
+```http
+GET http://localhost:7071/api/dbStatus
+```
+
+**Success Response** — `200 OK`
+
+```json
+{
+  "configured": true,
+  "provider": "Azure Cosmos DB",
+  "database": "InterviewDB",
+  "container": "sessions",
+  "status": "connected"
+}
+```
+
+---
+
 ### Proxy Fallback
 
 The frontend's `lib/api.ts` implements an automatic fallback mechanism:
@@ -544,7 +643,7 @@ flowchart TD
     L --> M{"More questions?"}
     M -->|Yes| H
     M -->|No| N["Click Finish Interview & View Report"]
-    N --> O["Session saved as 'completed' in localStorage"]
+    N --> O["Session saved as 'completed'\nPersisted to Azure Cosmos DB & Cached Locally"]
     O --> P["Performance Dashboard\nshows score trends, skill metrics,\nand full session history"]
 ```
 
@@ -667,7 +766,19 @@ All API keys and endpoint URLs are stored exclusively in the backend (`local.set
 
 ---
 
-### Session data not persisting between page refreshes
+### Session data not showing in Azure Cosmos DB
+
+**Symptom:** Sessions appear in the web app, but Data Explorer in Azure shows 0 items.
+
+**Solutions:**
+- Verify `COSMOS_DB_CONNECTION_STRING` is populated in `local.settings.json` (not in `frontend/.env.local`).
+- Ensure the database name matches your Azure resource exactly (`interviewDB`, case-sensitive).
+- Check that the backend is running (`http://localhost:7071/api/dbStatus` returns `"configured": true`).
+- Restart the application via `npm run dev` after updating `local.settings.json`.
+
+---
+
+### Session data not persisting between page refreshes (Local Mode)
 
 **Symptom:** Interview history disappears on refresh.
 
@@ -678,23 +789,54 @@ All API keys and endpoint URLs are stored exclusively in the backend (`local.set
 
 ---
 
-## 15. Future Enhancements
+---
 
-The following improvements are **planned but not yet implemented**:
+## 15. Viva & Project Defense Guide
 
-- **Cloud Session Persistence** — Replace `localStorage` with Azure Cosmos DB or Azure SQL to synchronize sessions across devices and browsers.
-- **Multi-round Interview Mode** — Support 5–10 question sessions with configurable question counts.
-- **Resume PDF Parsing** — Extract plain text from uploaded PDF files server-side, beyond the current browser `FileReader` text extraction.
-- **Difficulty Customization** — Allow candidates to request more Foundational, Intermediate, or Advanced questions on demand.
-- **Comparative Analytics** — Visualize score deltas between sessions and highlight improving or declining skill areas.
-- **Interview Timer** — Enforce per-question time limits to simulate real interview conditions.
-- **Team / Cohort Mode** — Allow training cohorts to share question banks and compare aggregate scores.
-- **Multilingual Support** — Generate questions and evaluate answers in languages other than English.
-- **Azure AD Authentication** — Secure the platform with Microsoft identity for enterprise use.
+This section is prepared specifically for academic project evaluations, viva voce, and technical demonstrations.
+
+### Q1: What is the high-level architecture of this system?
+> **Answer:** The project follows a **Cloud-Native Serverless 3-Tier Architecture**:
+> 1. **Presentation Tier:** Next.js 16 (React 19 + TypeScript + Tailwind CSS) providing a client-rendered responsive dashboard.
+> 2. **Application Tier:** Serverless Azure Functions (v4 Node.js runtime) exposing RESTful HTTP triggers for prompt orchestration, evaluation, and database CRUD.
+> 3. **Data & AI Tier:** Microsoft Azure OpenAI Service (GPT-4.1-mini) for generative inference, and **Azure Cosmos DB** (NoSQL API) for persistent JSON document storage.
+
+### Q2: Why did you choose Azure Cosmos DB (NoSQL) over a Relational SQL Database?
+> **Answer:**
+> - **Schema Flexibility:** An interview session contains nested, variable-length objects (question arrays, dynamic evaluation scorecards, strengths/weaknesses arrays, feedback text).
+> - **Zero Impedance Mismatch:** In TypeScript and Node.js, data is represented as native JSON. Cosmos DB stores documents directly without requiring ORM mappings or complex multi-table relational joins.
+> - **Single-digit Latency:** Cosmos DB guarantees sub-10ms read and write times at the 99th percentile globally.
+
+### Q3: What is the Partition Key strategy used in Cosmos DB?
+> **Answer:** The container uses `/id` (Session ID) as its partition key. Because queries and updates occur per session (point-reads and point-writes), partitioning on `/id` guarantees $O(1)$ query complexity and distributes request units (RU/s) evenly across physical partitions without hot spots.
+
+### Q4: How does the system handle network latency or offline scenarios?
+> **Answer:** We implemented a **Resilient Dual-Tier Cache Strategy**:
+> - The application writes to browser `localStorage` synchronously for instant, zero-latency UI updates.
+> - Asynchronously in the background, it synchronizes state with Azure Cosmos DB via Azure Functions (`POST /api/saveSession`).
+> - If the user is offline or Cosmos DB credentials are not yet configured, the system gracefully falls back to local storage without throwing unhandled exceptions.
+
+### Q5: How are credentials and secrets secured?
+> **Answer:**
+> - No Azure keys or endpoints are bundled into the client-side JavaScript.
+> - The Next.js frontend only holds `NEXT_PUBLIC_API_BASE_URL`.
+> - All Azure OpenAI API keys and Cosmos DB connection strings are isolated inside backend server environment variables (`local.settings.json` locally or Azure Key Vault / App Settings in production).
 
 ---
 
-## 16. Contributing
+## 16. Future Enhancements
+
+The following improvements are planned for future iterations:
+
+- **Blob Storage Integration** — Upload candidate resumes as PDF/DOCX to Azure Blob Storage with automated Azure AI Document Intelligence parsing.
+- **Azure AI Speech Integration** — Real-time speech-to-text audio streaming for live conversational voice mock interviews.
+- **Multi-round Interview Mode** — Configurable 5–10 question sessions across multiple rounds (HR, Technical, System Design).
+- **Comparative Analytics** — Visualizing score progression over weeks and pinpointing weaker technical skills.
+- **Azure AD (Entra ID) Authentication** — Role-based access control and student/college organizational logins.
+
+---
+
+## 17. Contributing
 
 Contributions are welcome. Please follow these steps:
 
@@ -741,7 +883,7 @@ Contributions are welcome. Please follow these steps:
 
 ---
 
-## 17. License and Attribution
+## 18. License and Attribution
 
 This project does not currently include a software license file. All rights are reserved by the project author unless otherwise stated.
 
@@ -753,21 +895,24 @@ This project does not currently include a software license file. All rights are 
 | React | MIT |
 | Tailwind CSS | MIT |
 | Lucide React | ISC |
+| Azure Cosmos DB SDK | MIT |
 | Geist Font | SIL Open Font License |
 
 If you reuse or fork this project, retain all copyright notices and third-party attributions. Do not remove any existing license headers from dependency packages.
 
 ---
 
-## 18. Author
+## 19. Project & Submission Metadata
 
 | Field | Value |
 |---|---|
-| Developer | Preetham |
-| GitHub | _Add your GitHub profile URL here_ |
-| Repository | _Add your repository URL here_ |
-| Project | AI Interview Preparation Platform (InterviewIQ) |
+| Project Title | AI Interview Preparation Platform (InterviewIQ) |
+| Academic Context | Semester 5 — Project-Based Learning (Azure PBL) |
+| System Architecture | Cloud-Native Serverless 3-Tier (Azure Functions + Cosmos DB + Next.js) |
+| Cloud Services | Microsoft Azure AI Foundry (Azure OpenAI), Azure Cosmos DB, Azure Functions |
+| AI Foundation Model | GPT-4.1-mini |
+| Presentation Layer | Next.js 16 (React 19, TypeScript, Tailwind CSS 4) |
 
 ---
 
-> Built with Next.js 16, React 19, Tailwind CSS 4, Azure Functions, and GPT-4.1-mini via Microsoft Azure AI Foundry.
+> Built with Next.js 16, React 19, Tailwind CSS 4, Azure Functions v4, Azure Cosmos DB, and GPT-4.1-mini via Microsoft Azure AI Foundry.

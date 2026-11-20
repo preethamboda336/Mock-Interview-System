@@ -1,4 +1,4 @@
-import { EvaluationFeedback } from "@/types/interview";
+import { EvaluationFeedback, InterviewSession } from "@/types/interview";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:7071";
 
@@ -18,19 +18,33 @@ export class ApiError extends Error {
  * Resilient request helper that tries the direct Azure Functions URL first,
  * and falls back to Next.js proxy route if a browser network/CORS error occurs.
  */
-async function makePostRequest<T>(endpoint: string, payload: Record<string, unknown>): Promise<T> {
-  const directUrl = `${API_BASE.replace(/\/$/, "")}/api/${endpoint}`;
-  const proxyUrl = `/api/proxy/${endpoint}`;
+async function makeApiRequest<T>(
+  endpoint: string,
+  options: {
+    method?: string;
+    body?: Record<string, unknown>;
+    params?: Record<string, string>;
+  } = {}
+): Promise<T> {
+  const method = options.method || (options.body ? "POST" : "GET");
+  const queryStr = options.params
+    ? "?" + new URLSearchParams(options.params).toString()
+    : "";
+
+  const directUrl = `${API_BASE.replace(/\/$/, "")}/api/${endpoint}${queryStr}`;
+  const proxyUrl = `/api/proxy/${endpoint}${queryStr}`;
+
+  const fetchOptions: RequestInit = {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+    },
+    ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+  };
 
   // First attempt: direct API call
   try {
-    const res = await fetch(directUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
+    const res = await fetch(directUrl, fetchOptions);
 
     if (res.ok) {
       return (await res.json()) as T;
@@ -51,13 +65,7 @@ async function makePostRequest<T>(endpoint: string, payload: Record<string, unkn
     // If it was a network error (like CORS blocked or local connection refused), attempt Next.js proxy fallback
     if (typeof window !== "undefined") {
       try {
-        const proxyRes = await fetch(proxyUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
+        const proxyRes = await fetch(proxyUrl, fetchOptions);
 
         if (proxyRes.ok) {
           return (await proxyRes.json()) as T;
@@ -93,9 +101,9 @@ export async function generateQuestions(resumeText: string): Promise<string[]> {
     throw new ApiError("Please provide a resume or job description to generate questions.", 400);
   }
 
-  const response = await makePostRequest<{ questions: string[]; error?: string }>(
+  const response = await makeApiRequest<{ questions: string[]; error?: string }>(
     "generateQuestions",
-    { resumeText: resumeText.trim() }
+    { body: { resumeText: resumeText.trim() } }
   );
 
   if (!response.questions || !Array.isArray(response.questions)) {
@@ -120,11 +128,13 @@ export async function evaluateAnswer(
     throw new ApiError("Please provide an answer to evaluate.", 400);
   }
 
-  const response = await makePostRequest<{ feedback: EvaluationFeedback; error?: string }>(
+  const response = await makeApiRequest<{ feedback: EvaluationFeedback; error?: string }>(
     "evaluateAnswer",
     {
-      question: question.trim(),
-      answer: answer.trim(),
+      body: {
+        question: question.trim(),
+        answer: answer.trim(),
+      },
     }
   );
 
@@ -135,3 +145,60 @@ export async function evaluateAnswer(
   return response.feedback;
 }
 
+/**
+ * Save or update an interview session in the database
+ */
+export async function saveSessionToDb(
+  session: InterviewSession
+): Promise<{ success: boolean; source: string; session: InterviewSession }> {
+  return await makeApiRequest<{ success: boolean; source: string; session: InterviewSession }>(
+    "saveSession",
+    { body: { session } }
+  );
+}
+
+/**
+ * Fetch all saved interview sessions from the database
+ */
+export async function fetchSessionsFromDb(): Promise<{
+  configured: boolean;
+  source: string;
+  sessions: InterviewSession[];
+}> {
+  return await makeApiRequest<{
+    configured: boolean;
+    source: string;
+    sessions: InterviewSession[];
+  }>("getSessions");
+}
+
+/**
+ * Delete an interview session from the database
+ */
+export async function deleteSessionFromDb(id: string): Promise<boolean> {
+  const res = await makeApiRequest<{ success: boolean }>("deleteSession", {
+    method: "POST",
+    body: { id },
+    params: { id },
+  });
+  return Boolean(res.success);
+}
+
+/**
+ * Check the database connection status
+ */
+export async function fetchDbStatus(): Promise<{
+  configured: boolean;
+  provider: string;
+  database: string;
+  container: string;
+  status: string;
+}> {
+  return await makeApiRequest<{
+    configured: boolean;
+    provider: string;
+    database: string;
+    container: string;
+    status: string;
+  }>("dbStatus");
+}

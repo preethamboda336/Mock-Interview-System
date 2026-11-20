@@ -6,10 +6,16 @@ import {
   getActiveSession,
   getStoredSessions,
   saveActiveSession,
-  saveSession,
+  saveSession as saveSessionLocal,
   deleteSession as removeStoredSession,
   STORAGE_SOURCE_LABEL,
 } from "@/lib/storage";
+import {
+  saveSessionToDb,
+  fetchSessionsFromDb,
+  deleteSessionFromDb,
+  fetchDbStatus,
+} from "@/lib/api";
 import { cleanQuestionText, extractNumericalScore } from "@/lib/utils";
 
 interface InterviewContextType {
@@ -17,6 +23,7 @@ interface InterviewContextType {
   historySessions: InterviewSession[];
   isLoaded: boolean;
   storageLabel: string;
+  isDbConnected: boolean;
   startNewSession: (jobTitle: string, resumeText: string, questionsList: string[]) => InterviewSession;
   updateAnswer: (questionId: string, answerText: string) => void;
   saveEvaluationForCurrentQuestion: (feedback: EvaluationFeedback) => void;
@@ -27,6 +34,7 @@ interface InterviewContextType {
   discardCurrentSession: () => void;
   deleteHistorySession: (id: string) => void;
   loadSessionIntoActive: (session: InterviewSession) => void;
+  refreshDbData: () => Promise<void>;
 }
 
 const InterviewContext = createContext<InterviewContextType | undefined>(undefined);
@@ -35,8 +43,49 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
   const [activeSession, setActiveSessionState] = useState<InterviewSession | null>(null);
   const [historySessions, setHistorySessions] = useState<InterviewSession[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [storageLabel, setStorageLabel] = useState<string>(STORAGE_SOURCE_LABEL);
+  const [isDbConnected, setIsDbConnected] = useState(false);
 
-  // Initialize from localStorage on mount
+  // Sync session with DB in background (non-blocking)
+  const syncSessionToDb = (session: InterviewSession) => {
+    saveSessionToDb(session)
+      .then((res) => {
+        if (res.source === "Azure Cosmos DB") {
+          setStorageLabel("Azure Cosmos DB");
+          setIsDbConnected(true);
+        }
+      })
+      .catch((err) => {
+        console.warn("Background DB sync notice:", err.message);
+      });
+  };
+
+  const refreshHistory = () => {
+    setHistorySessions(getStoredSessions());
+  };
+
+  const refreshDbData = async () => {
+    try {
+      const dbStatus = await fetchDbStatus().catch(() => null);
+      if (dbStatus && dbStatus.configured) {
+        setIsDbConnected(true);
+        setStorageLabel("Azure Cosmos DB");
+      }
+
+      const dbRes = await fetchSessionsFromDb().catch(() => null);
+      if (dbRes && dbRes.configured && Array.isArray(dbRes.sessions) && dbRes.sessions.length > 0) {
+        setHistorySessions(dbRes.sessions);
+        setStorageLabel(dbRes.source || "Azure Cosmos DB");
+        setIsDbConnected(true);
+        // Also update local cache for offline availability
+        dbRes.sessions.forEach((s) => saveSessionLocal(s));
+      }
+    } catch (e) {
+      console.warn("Could not sync with Cosmos DB on load:", e);
+    }
+  };
+
+  // Initialize from localStorage immediately, then reconcile with database
   useEffect(() => {
     try {
       const active = getActiveSession();
@@ -46,11 +95,9 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsLoaded(true);
     }
-  }, []);
 
-  const refreshHistory = () => {
-    setHistorySessions(getStoredSessions());
-  };
+    refreshDbData();
+  }, []);
 
   const startNewSession = (
     jobTitle: string,
@@ -80,7 +127,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
 
     setActiveSessionState(newSession);
     saveActiveSession(newSession);
-    saveSession(newSession);
+    saveSessionLocal(newSession);
+    syncSessionToDb(newSession);
     refreshHistory();
     return newSession;
   };
@@ -97,7 +145,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
     };
     setActiveSessionState(updated);
     saveActiveSession(updated);
-    saveSession(updated);
+    saveSessionLocal(updated);
+    syncSessionToDb(updated);
   };
 
   const saveEvaluationForCurrentQuestion = (feedback: EvaluationFeedback) => {
@@ -123,7 +172,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
 
     setActiveSessionState(updated);
     saveActiveSession(updated);
-    saveSession(updated);
+    saveSessionLocal(updated);
+    syncSessionToDb(updated);
     refreshHistory();
   };
 
@@ -136,7 +186,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
       };
       setActiveSessionState(updated);
       saveActiveSession(updated);
-      saveSession(updated);
+      saveSessionLocal(updated);
+      syncSessionToDb(updated);
       return true;
     }
     return false;
@@ -151,7 +202,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
       };
       setActiveSessionState(updated);
       saveActiveSession(updated);
-      saveSession(updated);
+      saveSessionLocal(updated);
+      syncSessionToDb(updated);
       return true;
     }
     return false;
@@ -166,7 +218,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
       };
       setActiveSessionState(updated);
       saveActiveSession(updated);
-      saveSession(updated);
+      saveSessionLocal(updated);
+      syncSessionToDb(updated);
     }
   };
 
@@ -184,7 +237,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
 
     setActiveSessionState(finalized);
     saveActiveSession(finalized);
-    saveSession(finalized);
+    saveSessionLocal(finalized);
+    syncSessionToDb(finalized);
     refreshHistory();
   };
 
@@ -195,6 +249,10 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
 
   const deleteHistorySession = (id: string) => {
     removeStoredSession(id);
+    deleteSessionFromDb(id).catch((err) => {
+      console.warn("Cosmos DB delete warning:", err.message);
+    });
+
     if (activeSession?.id === id) {
       discardCurrentSession();
     }
@@ -212,7 +270,8 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
         activeSession,
         historySessions,
         isLoaded,
-        storageLabel: STORAGE_SOURCE_LABEL,
+        storageLabel,
+        isDbConnected,
         startNewSession,
         updateAnswer,
         saveEvaluationForCurrentQuestion,
@@ -223,6 +282,7 @@ export function InterviewProvider({ children }: { children: React.ReactNode }) {
         discardCurrentSession,
         deleteHistorySession,
         loadSessionIntoActive,
+        refreshDbData,
       }}
     >
       {children}
@@ -237,4 +297,3 @@ export function useInterview() {
   }
   return context;
 }
-
